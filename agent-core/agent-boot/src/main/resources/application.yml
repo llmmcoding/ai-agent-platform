@@ -196,6 +196,11 @@ aiagent:
     long-term:
       enabled: true
       summary-trigger-rounds: 10
+    # 多级记忆 Collection 配置
+    collections:
+      episodic: episodic_memory
+      factual: factual_memory
+      preference: preference_memory
   # 多维度限流 (借鉴 llmgateway)
   ratelimit:
     enabled: true
