@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-agent-python-worker
+  namespace: ai-agent
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ai-agent-python-worker
+  template:
+    metadata:
+      labels:
+        app: ai-agent-python-worker
+    spec:
+      containers:
+        - name: python-worker
+          image: ai-agent-platform/python-worker:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8001
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka-service:9092"
+            - name: REDIS_HOST
+              value: "redis-service"
+            - name: MILVUS_HOST
+              value: "milvus-service"
+            - name: CELERY_BROKER_URL
+              value: "redis://redis-service:6379/1"
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"

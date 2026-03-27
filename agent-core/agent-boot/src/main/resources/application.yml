@@ -1,0 +1,225 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: ai-agent-platform
+
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:public}
+        group: AI-AGENT-GROUP
+      config:
+        server-addr: ${NACOS_SERVER:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:public}
+        group: AI-AGENT-GROUP
+        file-extension: yml
+        refresh-enabled: true
+
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOriginPatterns: "*"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - OPTIONS
+            allowedHeaders: "*"
+            allowCredentials: true
+            maxAge: 3600
+
+  kafka:
+    bootstrap-servers: ${KAFKA_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+    consumer:
+      group-id: ai-agent-consumer-group
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      properties:
+        session.timeout.ms: 30000
+        max.poll.records: 100
+
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD:}
+    database: 0
+    lettuce:
+      pool:
+        max-active: 200
+        max-idle: 50
+        min-idle: 10
+        max-wait: 3000ms
+      shutdown-timeout: 100ms
+
+  data:
+    redis:
+      repositories:
+        enabled: false
+
+# 管理端点
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+# 日志配置 (借鉴 llmgateway 的详细日志格式)
+logging:
+  level:
+    root: INFO
+    com.aiagent: DEBUG
+    org.springframework.cloud.gateway: DEBUG
+    # HTTP 日志
+    reactor.netty: INFO
+    org.springframework.http: DEBUG
+  pattern:
+    # 详细格式: 时间 - traceId - 级别 - logger - 消息
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-}] %-5level %logger{36} - %msg%n"
+  # 请求日志
+  include-request-data: true
+  include-response-data: true
+
+# Prometheus 指标配置 (借鉴 llmgateway)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    # 发布详细指标
+    export:
+      prometheus:
+        enabled: true
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        llm.calls: true
+
+# AI Agent 特有配置
+
+# Springdoc OpenAPI 配置 (WebFlux)
+springdoc:
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+    operationsSorter: method
+  show-actuator: false
+
+aiagent:
+  # WebClient 高并发配置 (借鉴 llmgateway)
+  webclient:
+    max-connections: 1000
+    per-route: 100
+    connect-timeout: 5000
+    response-timeout: 120000
+    pending-acquire-timeout: 10000
+
+  llm:
+    default-provider: openai
+    request-timeout: 120
+    providers:
+      openai:
+        api-key: ${OPENAI_API_KEY:}
+        base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+        model: ${OPENAI_MODEL:gpt-4o}
+        timeout: 120
+      anthropic:
+        api-key: ${ANTHROPIC_API_KEY:}
+        base-url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com}
+        model: ${ANTHROPIC_MODEL:claude-3-5-sonnet-20241022}
+        timeout: 120
+      azure:
+        api-key: ${AZURE_OPENAI_KEY:}
+        base-url: ${AZURE_OPENAI_ENDPOINT:}
+        deployment: ${AZURE_OPENAI_DEPLOYMENT:}
+        api-version: "2024-02-01"
+        timeout: 120
+      local:
+        url: ${LOCAL_LLM_URL:http://localhost:11434}
+        model: ${LOCAL_LLM_MODEL:qwen2.5}
+        timeout: 180
+    router:
+      strategy: failover
+      max-retries: 2
+  tool:
+    async-enabled: true
+    timeout: 30
+    max-concurrent: 50
+  memory:
+    short-term:
+      ttl: 3600
+      max-size: 100
+    long-term:
+      enabled: true
+      summary-trigger-rounds: 10
+  # 多维度限流 (借鉴 llmgateway)
+  ratelimit:
+    enabled: true
+    # RPM: Requests Per Minute
+    rpm:
+      enabled: true
+      max-requests: 100
+    # TPM: Tokens Per Minute
+    tpm:
+      enabled: true
+      max-tokens: 50000
+    window-minutes: 1
+  # 向量存储配置 (支持 milvus / pgvector)
+  vector-store:
+    provider: ${VECTOR_STORE_PROVIDER:milvus}  # milvus | pgvector
+    collection:
+      default: default
+    search:
+      top-k: 20
+    embedding-dim: 1536
+  # Milvus 配置
+  milvus:
+    host: ${MILVUS_HOST:localhost}
+    port: ${MILVUS_PORT:19530}
+    connection-pool-size: 20
+  # pgvector 配置
+  pgvector:
+    host: ${PGVECTOR_HOST:localhost}
+    port: ${PGVECTOR_PORT:5432}
+    user: ${PGVECTOR_USER:postgres}
+    password: ${PGVECTOR_PASSWORD:postgres}
+    database: ${PGVECTOR_DATABASE:postgres}
+    pool-size: 20
+  # Kafka 向量写入 Consumer 配置
+  kafka:
+    vector-write:
+      group-id: ai-agent-vector-write-consumer
+
