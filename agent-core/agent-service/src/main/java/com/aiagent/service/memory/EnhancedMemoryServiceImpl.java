@@ -1,5 +1,6 @@
 package com.aiagent.service.memory;
 
+import com.aiagent.service.embedding.EmbeddingService;
 import com.aiagent.service.vector.VectorStoreFactory;
 import com.aiagent.service.vector.VectorStoreFactory.VectorSearchService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -27,6 +28,7 @@ public class EnhancedMemoryServiceImpl implements EnhancedMemoryService {
     private final VectorStoreFactory vectorStoreFactory;
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private final EmbeddingService embeddingService;
 
     // Collection 名称
     @Value("${aiagent.memory.collections.episodic:episodic_memory}")
@@ -338,18 +340,33 @@ public class EnhancedMemoryServiceImpl implements EnhancedMemoryService {
     }
 
     /**
-     * 简化: 将内容转为假向量
-     * 实际应该调用 embedding 服务
+     * 调用 Python Embedding 服务获取向量
      */
     private List<Float> embedQuery(String query) {
-        // 简化实现: 返回一个假向量
-        // 实际应该调用 Python embedding 服务
-        return new ArrayList<>(Collections.nCopies(1536, 0.0f));
+        try {
+            return embeddingService.getEmbedding(query);
+        } catch (Exception e) {
+            log.error("Failed to embed query: {}", e.getMessage());
+            return getFallbackEmbedding();
+        }
     }
 
+    /**
+     * 调用 Python Embedding 服务获取向量
+     */
     private List<Float> embedContent(String content) {
-        // 简化实现: 返回一个基于内容哈希的向量
-        // 实际应该调用 Python embedding 服务
+        try {
+            return embeddingService.getEmbedding(content);
+        } catch (Exception e) {
+            log.error("Failed to embed content: {}", e.getMessage());
+            return getFallbackEmbedding();
+        }
+    }
+
+    /**
+     * Fallback 向量
+     */
+    private List<Float> getFallbackEmbedding() {
         return new ArrayList<>(Collections.nCopies(1536, 0.0f));
     }
 }
