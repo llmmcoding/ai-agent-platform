@@ -2,13 +2,17 @@ package com.aiagent.service.milvus;
 
 import io.milvus.client.MilvusClient;
 import io.milvus.common.clientenum.ConsistencyLevelEnum;
+import io.milvus.grpc.MutationResult;
 import io.milvus.grpc.SearchResults;
 import io.milvus.param.*;
-import io.milvus.param.collection.FieldType;
-import io.milvus.param.collection.CreateCollectionParam;
+import io.milvus.param.collection.*;
+import io.milvus.param.dml.DeleteParam;
 import io.milvus.param.dml.InsertParam;
 import io.milvus.param.dml.SearchParam;
-import io.milvus.response.QueryResultsWrapper;
+import io.milvus.param.index.CreateIndexParam;
+import io.milvus.param.IndexType;
+import io.milvus.param.MetricType;
+import io.milvus.response.SearchResultsWrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,15 +21,14 @@ import org.springframework.stereotype.Service;
 import java.util.*;
 
 /**
- * Milvus 向量检索服务
- * 负责向量搜索、写入、删除等操作
+ * Milvus 向量检索服务 (SDK 2.x)
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class MilvusService {
 
-    private final MilvusClient milvusClient;
+    private final MilvusConnectionManager connectionManager;
 
     @Value("${aiagent.milvus.collection.default:default}")
     private String defaultCollection;
@@ -38,56 +41,46 @@ public class MilvusService {
 
     /**
      * 搜索向量
-     *
-     * @param queryEmbedding 查询向量
-     * @param collection     集合名称
-     * @param topK          返回数量
-     * @return 搜索结果列表
      */
     public List<Map<String, Object>> searchVectors(List<Float> queryEmbedding, String collection, int topK) {
         try {
-            MilvusClient client = milvusClient.getClient();
+            MilvusClient client = connectionManager.getClient();
+            if (client == null) {
+                log.error("Milvus client is not initialized");
+                return Collections.emptyList();
+            }
 
-            // 确保 Collection 存在
             if (!collectionExists(collection)) {
                 log.warn("Collection not found: {}", collection);
                 return Collections.emptyList();
             }
 
-            // 搜索参数
             SearchParam searchParam = SearchParam.newBuilder()
                     .withCollectionName(collection)
                     .withVectors(Collections.singletonList(queryEmbedding))
                     .withVectorFieldName("embedding")
                     .withTopK(topK)
-                    .withConsistencyLevel(CONSISTENCY_LEVEL_JINNI)
+                    .withConsistencyLevel(ConsistencyLevelEnum.EVENTUALLY)
                     .withParams("{\"nprobe\": 10}")
                     .build();
 
-            // 执行搜索
-            SearchResults results = client.search(searchParam);
+            R<SearchResults> response = client.search(searchParam);
 
-            // 解析结果
+            if (response.getStatus() != R.Status.Success.getCode()) {
+                log.error("Milvus search failed: {}", response.getMessage());
+                return Collections.emptyList();
+            }
+
+            SearchResultsWrapper wrapper = new SearchResultsWrapper(response.getData().getResults());
+            List<SearchResultsWrapper.IDScore> idScores = wrapper.getIDScore(0);
+
             List<Map<String, Object>> formattedResults = new ArrayList<>();
-            QueryResultsWrapper wrapper = new QueryResultsWrapper(results);
-            List<QueryResultsWrapper.ScoredVector> scoredVectors = wrapper.getScoredVectors();
-
-            for (QueryResultsWrapper.ScoredVector scoredVector : scoredVectors) {
-                Map<String, Object> result = new HashMap<>();
-                result.put("id", scoredVector.getID());
-                result.put("score", scoredVector.getScore());
-                result.put("vector", scoredVector.getVector());
-
-                // 获取标量字段
-                Map<String, Object> fields = scoredVector.getFields();
-                if (fields.containsKey("content")) {
-                    result.put("content", fields.get("content"));
-                }
-                if (fields.containsKey("metadata")) {
-                    result.put("metadata", fields.get("metadata"));
-                }
-
-                formattedResults.add(result);
+            for (SearchResultsWrapper.IDScore idScore : idScores) {
+                Map<String, Object> map = new HashMap<>();
+                map.put("id", idScore.getStrID());
+                map.put("score", idScore.getScore());
+                map.put("fieldValues", idScore.getFieldValues());
+                formattedResults.add(map);
             }
 
             log.debug("Milvus search returned {} results from collection {}", formattedResults.size(), collection);
@@ -101,44 +94,55 @@ public class MilvusService {
 
     /**
      * 批量插入向量
-     *
-     * @param collection  集合名称
-     * @param documents   文档列表，每项包含 content, metadata
-     * @param embeddings  对应的 embedding 向量列表
-     * @return 插入的文档数量
      */
     public int insertVectors(String collection, List<Map<String, Object>> documents, List<List<Float>> embeddings) {
         try {
-            MilvusClient client = milvusClient.getClient();
+            MilvusClient client = connectionManager.getClient();
+            if (client == null) {
+                throw new RuntimeException("Milvus client is not initialized");
+            }
 
-            // 确保 Collection 存在
             if (!collectionExists(collection)) {
                 createCollection(collection);
             }
 
-            // 准备字段数据
+            List<String> ids = new ArrayList<>();
             List<List<Float>> vectors = new ArrayList<>();
             List<String> contents = new ArrayList<>();
             List<String> metadatas = new ArrayList<>();
 
             for (int i = 0; i < documents.size(); i++) {
                 Map<String, Object> doc = documents.get(i);
+                ids.add(doc.getOrDefault("id", UUID.randomUUID().toString()).toString());
                 vectors.add(embeddings.get(i));
                 contents.add((String) doc.getOrDefault("content", ""));
                 metadatas.add(doc.getOrDefault("metadata", "{}").toString());
             }
 
-            // 构建插入参数
+            // 构建字段
+            List<InsertParam.Field> fields = new ArrayList<>();
+            fields.add(new InsertParam.Field("id", ids));
+            fields.add(new InsertParam.Field("embedding", vectors));
+            fields.add(new InsertParam.Field("content", contents));
+            fields.add(new InsertParam.Field("metadata", metadatas));
+
             InsertParam insertParam = InsertParam.newBuilder()
                     .withCollectionName(collection)
-                    .withFields("embedding", vectors)
-                    .withFields("content", contents)
-                    .withFields("metadata", metadatas)
+                    .withFields(fields)
                     .build();
 
-            // 执行插入
-            client.insert(insertParam);
-            client.flush(collection);
+            R<MutationResult> response = client.insert(insertParam);
+
+            if (response.getStatus() != R.Status.Success.getCode()) {
+                log.error("Milvus insert failed: {}", response.getMessage());
+                throw new RuntimeException("Failed to insert vectors");
+            }
+
+            // Flush
+            FlushParam flushParam = FlushParam.newBuilder()
+                    .withCollectionNames(Collections.singletonList(collection))
+                    .build();
+            client.flush(flushParam);
 
             log.info("Inserted {} vectors into collection {}", documents.size(), collection);
             return documents.size();
@@ -151,16 +155,15 @@ public class MilvusService {
 
     /**
      * 删除向量
-     *
-     * @param collection 集合名称
-     * @param ids        要删除的向量 ID 列表
-     * @return 是否成功
      */
     public boolean deleteVectors(String collection, List<String> ids) {
         try {
-            MilvusClient client = milvusClient.getClient();
+            MilvusClient client = connectionManager.getClient();
+            if (client == null) {
+                log.error("Milvus client is not initialized");
+                return false;
+            }
 
-            // 构建删除表达式
             StringBuilder expr = new StringBuilder("id in [");
             for (int i = 0; i < ids.size(); i++) {
                 expr.append("\"").append(ids.get(i)).append("\"");
@@ -175,8 +178,12 @@ public class MilvusService {
                     .withExpr(expr.toString())
                     .build();
 
-            client.delete(deleteParam);
-            client.flush(collection);
+            R<MutationResult> response = client.delete(deleteParam);
+
+            if (response.getStatus() != R.Status.Success.getCode()) {
+                log.error("Milvus delete failed: {}", response.getMessage());
+                return false;
+            }
 
             log.info("Deleted {} vectors from collection {}", ids.size(), collection);
             return true;
@@ -192,8 +199,15 @@ public class MilvusService {
      */
     public boolean collectionExists(String collection) {
         try {
-            MilvusClient client = milvusClient.getClient();
-            return client.hasCollection(collection);
+            MilvusClient client = connectionManager.getClient();
+            if (client == null) {
+                return false;
+            }
+            HasCollectionParam hasParam = HasCollectionParam.newBuilder()
+                    .withCollectionName(collection)
+                    .build();
+            R<Boolean> response = client.hasCollection(hasParam);
+            return response.getStatus() == R.Status.Success.getCode() && response.getData();
         } catch (Exception e) {
             log.error("Failed to check collection existence: {}", e.getMessage());
             return false;
@@ -205,9 +219,17 @@ public class MilvusService {
      */
     public void createCollection(String collection) {
         try {
-            MilvusClient client = milvusClient.getClient();
+            MilvusClient client = connectionManager.getClient();
+            if (client == null) {
+                throw new RuntimeException("Milvus client is not initialized");
+            }
 
-            // 定义字段
+            FieldType idField = FieldType.newBuilder()
+                    .withName("id")
+                    .withDataType(io.milvus.grpc.DataType.VarChar)
+                    .withMaxLength(128)
+                    .build();
+
             FieldType embeddingField = FieldType.newBuilder()
                     .withName("embedding")
                     .withDataType(io.milvus.grpc.DataType.FloatVector)
@@ -222,26 +244,35 @@ public class MilvusService {
 
             FieldType metadataField = FieldType.newBuilder()
                     .withName("metadata")
-                    .withDataType(io.milvus.grpc.DataType.JSON)
+                    .withDataType(io.milvus.grpc.DataType.VarChar)
+                    .withMaxLength(65535)
                     .build();
 
-            // 构建创建参数
+            List<FieldType> fieldTypes = Arrays.asList(idField, embeddingField, contentField, metadataField);
+
             CreateCollectionParam createParam = CreateCollectionParam.newBuilder()
                     .withCollectionName(collection)
                     .withDescription("AI Agent RAG collection: " + collection)
-                    .withFieldTypes(embeddingField, contentField, metadataField)
+                    .withFieldTypes(fieldTypes)
                     .build();
 
             client.createCollection(createParam);
 
-            // 创建索引
-            client.createIndex(IndexParam.newBuilder()
+            // Create index
+            CreateIndexParam indexParam = CreateIndexParam.newBuilder()
                     .withCollectionName(collection)
                     .withFieldName("embedding")
                     .withIndexType(IndexType.IVF_FLAT)
                     .withMetricType(MetricType.IP)
-                    .withParams("{\"nlist\": 128}")
-                    .build());
+                    .withExtraParam("{\"nlist\": 128}")
+                    .build();
+            client.createIndex(indexParam);
+
+            // Load collection
+            LoadCollectionParam loadParam = LoadCollectionParam.newBuilder()
+                    .withCollectionName(collection)
+                    .build();
+            client.loadCollection(loadParam);
 
             log.info("Created Milvus collection: {}", collection);
 
@@ -251,9 +282,6 @@ public class MilvusService {
         }
     }
 
-    /**
-     * 获取默认 Collection 名称
-     */
     public String getDefaultCollection() {
         return defaultCollection;
     }

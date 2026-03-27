@@ -82,19 +82,22 @@ public class PGVectorService {
                 VALUES (?, ?, ?, ?::jsonb, ?::vector)
                 """;
 
-            int[] results = getJdbcTemplate().batchUpdate(sql, documents, embeddings.size(),
-                (PreparedStatement ps, int index) -> {
-                    Map<String, Object> doc = documents.get(index);
-                    List<Float> embedding = embeddings.get(index);
+            // 使用简单的循环插入而不是 batchUpdate
+            int total = 0;
+            for (int i = 0; i < documents.size(); i++) {
+                Map<String, Object> doc = documents.get(i);
+                List<Float> embedding = embeddings.get(i);
 
-                    ps.setObject(1, UUID.randomUUID().toString());
-                    ps.setString(2, collection);
-                    ps.setString(3, (String) doc.getOrDefault("content", ""));
-                    ps.setString(4, doc.getOrDefault("metadata", "{}").toString());
-                    ps.setString(5, vectorToString(embedding));
-                });
+                getJdbcTemplate().update(sql,
+                    UUID.randomUUID().toString(),
+                    collection,
+                    (String) doc.getOrDefault("content", ""),
+                    doc.getOrDefault("metadata", "{}").toString(),
+                    vectorToString(embedding)
+                );
+                total++;
+            }
 
-            int total = Arrays.stream(results).sum();
             log.info("Inserted {} vectors into collection {}", total, collection);
             return total;
 

@@ -315,7 +315,6 @@ public class EnhancedMemoryServiceImpl implements EnhancedMemoryService {
         }
 
         entry.setMetadata((Map<String, Object>) map.get("metadata"));
-        entry.setScore((Double) map.get("score"));
 
         return entry;
     }

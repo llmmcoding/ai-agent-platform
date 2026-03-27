@@ -52,8 +52,8 @@ public class InstanceController {
                         info.put("port", instance.getPort());
                         info.put("scheme", instance.getScheme());
                         info.put("metadata", instance.getMetadata());
-                        info.put("healthy", instance.isHealthy());
-                        info.put("enabled", instance.isEnabled());
+                        info.put("healthy", instance.getMetadata().getOrDefault("healthy", "true"));
+                        info.put("enabled", instance.getMetadata().getOrDefault("enabled", "true"));
                         return info;
                     })
                     .collect(Collectors.toList());
@@ -99,7 +99,7 @@ public class InstanceController {
         try {
             List<ServiceInstance> instances = discoveryClient.getInstances(applicationName);
 
-            boolean hasHealthyInstance = instances.stream().anyMatch(ServiceInstance::isHealthy);
+            boolean hasHealthyInstance = instances.stream().anyMatch(i -> "true".equals(i.getMetadata().getOrDefault("healthy", "true")));
 
             Map<String, Object> health = new HashMap<>();
             health.put("status", "UP");
@@ -108,7 +108,7 @@ public class InstanceController {
                     "port", serverPort
             ));
             health.put("totalInstances", instances.size());
-            health.put("healthyInstances", instances.stream().filter(ServiceInstance::isHealthy).count());
+            health.put("healthyInstances", instances.stream().filter(i -> "true".equals(i.getMetadata().getOrDefault("healthy", "true"))).count());
             health.put("clusterAvailable", hasHealthyInstance);
 
             return Result.success(health);
