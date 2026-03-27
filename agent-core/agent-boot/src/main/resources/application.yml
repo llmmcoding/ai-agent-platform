@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: ${SERVER_PORT:8080}
 
 spring:
   application:
@@ -8,9 +8,20 @@ spring:
   cloud:
     nacos:
       discovery:
+        enabled: true                          # 启用服务注册发现
+        register-enabled: true                  # 向 Nacos 注册自身
         server-addr: ${NACOS_SERVER:localhost:8848}
         namespace: ${NACOS_NAMESPACE:public}
         group: AI-AGENT-GROUP
+        cluster-name: ${NACOS_CLUSTER_NAME:DEFAULT}  # 集群名称
+        weight: ${NACOS_INSTANCE_WEIGHT:1}     # 实例权重
+        ip: ${NACOS_INSTANCE_IP:${spring.cloud.client.ip-address}}  # 注册的 IP
+        port: ${SERVER_PORT:8080}               # 注册的端口
+        healthy: true                           # 健康检查
+        instance-id: ${NACOS_INSTANCE_ID:${spring.application.name}:${server.port}}  # 实例 ID
+        heartbeat-interval-ms: 5000              # 心跳间隔
+        heartbeat-timeout-ms: 15000              # 心跳超时
+        ip-delete-timeout-ms: 30000              # 实例删除超时
       config:
         server-addr: ${NACOS_SERVER:localhost:8848}
         namespace: ${NACOS_NAMESPACE:public}
