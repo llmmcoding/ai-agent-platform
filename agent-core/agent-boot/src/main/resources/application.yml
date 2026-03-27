@@ -8,7 +8,7 @@ spring:
   cloud:
     nacos:
       discovery:
-        enabled: true                          # 启用服务注册发现
+        enabled: false                         # 禁用服务注册发现 (测试用)
         register-enabled: true                  # 向 Nacos 注册自身
         server-addr: ${NACOS_SERVER:localhost:8848}
         namespace: ${NACOS_NAMESPACE:public}
@@ -98,35 +98,6 @@ management:
   metrics:
     tags:
       application: ${spring.application.name}
-
-# 日志配置 (借鉴 llmgateway 的详细日志格式)
-logging:
-  level:
-    root: INFO
-    com.aiagent: DEBUG
-    org.springframework.cloud.gateway: DEBUG
-    # HTTP 日志
-    reactor.netty: INFO
-    org.springframework.http: DEBUG
-  pattern:
-    # 详细格式: 时间 - traceId - 级别 - logger - 消息
-    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-}] %-5level %logger{36} - %msg%n"
-  # 请求日志
-  include-request-data: true
-  include-response-data: true
-
-# Prometheus 指标配置 (借鉴 llmgateway)
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info,metrics,prometheus
-  endpoint:
-    health:
-      show-details: always
-  metrics:
-    tags:
-      application: ${spring.application.name}
     # 发布详细指标
     export:
       prometheus:
@@ -135,6 +106,19 @@ management:
       percentiles-histogram:
         http.server.requests: true
         llm.calls: true
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.aiagent: DEBUG
+    org.springframework.cloud.gateway: DEBUG
+    reactor.netty: INFO
+    org.springframework.http: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-}] %-5level %logger{36} - %msg%n"
+  include-request-data: true
+  include-response-data: true
 
 # AI Agent 特有配置
 
@@ -150,7 +134,7 @@ springdoc:
   show-actuator: false
 
 aiagent:
-  # WebClient 高并发配置 (借鉴 llmgateway)
+  # WebClient 高并发配置
   webclient:
     max-connections: 1000
     per-route: 100
@@ -201,21 +185,19 @@ aiagent:
       episodic: episodic_memory
       factual: factual_memory
       preference: preference_memory
-  # 多维度限流 (借鉴 llmgateway)
+  # 多维度限流
   ratelimit:
     enabled: true
-    # RPM: Requests Per Minute
     rpm:
       enabled: true
       max-requests: 100
-    # TPM: Tokens Per Minute
     tpm:
       enabled: true
       max-tokens: 50000
     window-minutes: 1
   # 向量存储配置 (支持 milvus / pgvector)
   vector-store:
-    provider: ${VECTOR_STORE_PROVIDER:milvus}  # milvus | pgvector
+    provider: ${VECTOR_STORE_PROVIDER:milvus}
     collection:
       default: default
     search:
@@ -238,4 +220,3 @@ aiagent:
   kafka:
     vector-write:
       group-id: ai-agent-vector-write-consumer
-
