@@ -73,33 +73,38 @@ public class PGVectorService {
     }
 
     /**
-     * 插入向量
+     * 插入向量 (批量优化)
      */
     public int insertVectors(String collection, List<Map<String, Object>> documents, List<List<Float>> embeddings) {
         try {
+            if (documents == null || documents.isEmpty()) {
+                return 0;
+            }
+
             String sql = """
                 INSERT INTO embeddings (id, collection, content, metadata, embedding)
                 VALUES (?, ?, ?, ?::jsonb, ?::vector)
                 """;
 
-            // 使用简单的循环插入而不是 batchUpdate
-            int total = 0;
+            // 使用 batchUpdate 批量插入以提高性能
+            List<Object[]> batchArgs = new ArrayList<>(documents.size());
             for (int i = 0; i < documents.size(); i++) {
                 Map<String, Object> doc = documents.get(i);
                 List<Float> embedding = embeddings.get(i);
-
-                getJdbcTemplate().update(sql,
+                batchArgs.add(new Object[]{
                     UUID.randomUUID().toString(),
                     collection,
                     (String) doc.getOrDefault("content", ""),
                     doc.getOrDefault("metadata", "{}").toString(),
                     vectorToString(embedding)
-                );
-                total++;
+                });
             }
 
-            log.info("Inserted {} vectors into collection {}", total, collection);
-            return total;
+            int[] results = getJdbcTemplate().batchUpdate(sql, batchArgs);
+            int totalInserted = Arrays.stream(results).sum();
+
+            log.info("Batch inserted {} vectors into collection {}", totalInserted, collection);
+            return totalInserted;
 
         } catch (Exception e) {
             log.error("PGVector insert failed: {}", e.getMessage(), e);

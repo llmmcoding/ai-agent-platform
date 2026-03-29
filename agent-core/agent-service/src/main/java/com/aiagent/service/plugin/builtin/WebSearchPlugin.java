@@ -2,11 +2,13 @@ package com.aiagent.service.plugin.builtin;
 
 import com.aiagent.service.plugin.Plugin;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
 /**
  * 内置 Web Search 插件 - 封装 Python Worker 的 DuckDuckGo 搜索
  */
 @Slf4j
+@Component
 public class WebSearchPlugin implements Plugin {
 
     private PluginContext context;

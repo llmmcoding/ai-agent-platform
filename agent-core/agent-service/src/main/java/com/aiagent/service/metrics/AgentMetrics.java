@@ -220,4 +220,69 @@ public class AgentMetrics {
         double total = hits + misses;
         return total > 0 ? hits / total : 0.0;
     }
+
+    /**
+     * 记录向量搜索延迟
+     */
+    public void recordVectorSearchLatency(String provider, double latencyMs) {
+        Timer.builder("agent_vector_search_latency")
+                .tag("provider", provider)
+                .register(meterRegistry)
+                .record((long) latencyMs, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * RAG 降级触发次数
+     */
+    public void incrementRAGDegradeTriggered() {
+        Counter.builder("agent_rag_degrade_triggered_total")
+                .description("Total number of RAG degradation triggers")
+                .register(meterRegistry)
+                .increment();
+    }
+
+    /**
+     * RAG 召回失败次数
+     */
+    public void incrementRAGRecallFailures() {
+        Counter.builder("agent_rag_recall_failures_total")
+                .description("Total number of RAG recall failures")
+                .register(meterRegistry)
+                .increment();
+    }
+
+    /**
+     * RAG 缓存命中
+     */
+    public void incrementRAGCacheHit() {
+        cacheHitCounter.increment();
+    }
+
+    /**
+     * RAG 缓存未命中
+     */
+    public void incrementRAGCacheMiss() {
+        cacheMissCounter.increment();
+    }
+
+    /**
+     * 记录实验结果
+     */
+    public void recordExperimentResult(String experimentId, String variantId, boolean success, long latencyMs) {
+        Counter.builder("agent_experiment_results_total")
+                .tag("experiment_id", experimentId)
+                .tag("variant_id", variantId)
+                .tag("success", String.valueOf(success))
+                .description("Total number of experiment results")
+                .register(meterRegistry)
+                .increment();
+
+        Timer.builder("agent_experiment_latency")
+                .tag("experiment_id", experimentId)
+                .tag("variant_id", variantId)
+                .tag("success", String.valueOf(success))
+                .description("Experiment latency")
+                .register(meterRegistry)
+                .record(latencyMs, TimeUnit.MILLISECONDS);
+    }
 }

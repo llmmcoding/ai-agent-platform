@@ -5,9 +5,12 @@ import com.aiagent.common.Constants;
 import com.aiagent.common.exception.AgentException;
 import com.aiagent.common.exception.ErrorCode;
 import com.aiagent.service.ToolRegistry;
+import com.aiagent.service.tools.CompactTool;
+import com.aiagent.service.tools.TaskTool;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -134,6 +137,20 @@ public class ToolRegistryImpl implements ToolRegistry {
                     }
                 });
 
+        // 注册 CompactTool (如果可用)
+        if (compactTool != null) {
+            register("compact_context", CompactTool.TOOL_DESCRIPTION, Constants.Tool.JAVA,
+                    compactTool::execute);
+            log.info("Registered compact_context tool");
+        }
+
+        // 注册 TaskTool (如果可用)
+        if (taskTool != null) {
+            register("task", TaskTool.TOOL_DESCRIPTION, Constants.Tool.JAVA,
+                    taskTool::execute);
+            log.info("Registered task tool");
+        }
+
         log.info("Initialized {} builtin Java tools", toolRegistry.size());
     }
 
@@ -181,8 +198,14 @@ public class ToolRegistryImpl implements ToolRegistry {
         return future;
     }
 
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     private ToolKafkaClient toolKafkaClient;
+
+    @Autowired(required = false)
+    private CompactTool compactTool;
+
+    @Autowired(required = false)
+    private TaskTool taskTool;
 
     @Override
     public String getToolDescription(String name) {
@@ -228,14 +251,16 @@ public class ToolRegistryImpl implements ToolRegistry {
 
     /**
      * 安全执行数学表达式
+     * 使用 GraalJS (Java 17+ 兼容，替代已移除的 Nashorn)
      */
     private double evaluateExpression(String expression) {
-        try {
-            Object result = new javax.script.ScriptEngineManager()
-                    .getEngineByName("JavaScript")
-                    .eval(expression);
-            if (result instanceof Number) {
-                return ((Number) result).doubleValue();
+        try (org.graalvm.polyglot.Context context = org.graalvm.polyglot.Context.newBuilder("js")
+                .allowExperimentalOptions(true)
+                .option("js.ecmascript-version", "2020")
+                .build()) {
+            org.graalvm.polyglot.Value result = context.eval("js", expression);
+            if (result.isNumber()) {
+                return result.asDouble();
             }
             return Double.parseDouble(result.toString());
         } catch (Exception e) {

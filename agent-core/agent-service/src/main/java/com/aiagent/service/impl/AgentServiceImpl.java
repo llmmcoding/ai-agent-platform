@@ -10,14 +10,16 @@ import com.aiagent.service.MemoryService;
 import com.aiagent.service.PromptBuilder;
 import com.aiagent.service.ReActEngine;
 import com.aiagent.service.ToolRegistry;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Agent 服务实现
@@ -32,11 +34,11 @@ public class AgentServiceImpl implements AgentService {
     private final ToolRegistry toolRegistry;
     private final MemoryService memoryService;
     private final ReActEngine reActEngine;
+    private final StringRedisTemplate redisTemplate;
+    private final ObjectMapper objectMapper;
 
-    /**
-     * 存储异步任务状态
-     */
-    private final ConcurrentHashMap<String, AgentResponse> taskCache = new ConcurrentHashMap<>();
+    private static final String TASK_CACHE_PREFIX = "aiagent:task:";
+    private static final long TASK_TTL_SECONDS = 3600;
 
     @Override
     public Mono<AgentResponse> invoke(AgentRequest request) {
@@ -91,17 +93,31 @@ public class AgentServiceImpl implements AgentService {
         String taskId = UUID.randomUUID().toString();
 
         return invoke(request)
-                .doOnNext(response -> taskCache.put(taskId, response))
+                .doOnNext(response -> {
+                    try {
+                        String json = objectMapper.writeValueAsString(response);
+                        redisTemplate.opsForValue().set(TASK_CACHE_PREFIX + taskId, json, TASK_TTL_SECONDS, TimeUnit.SECONDS);
+                        log.info("Async task persisted to Redis: taskId={}", taskId);
+                    } catch (Exception e) {
+                        log.error("Failed to persist async task to Redis: taskId={}", taskId, e);
+                    }
+                })
                 .thenReturn(taskId);
     }
 
     @Override
     public Mono<AgentResponse> getTaskStatus(String taskId) {
-        AgentResponse response = taskCache.get(taskId);
-        if (response == null) {
-            return Mono.error(new AgentException("Task not found: " + taskId));
+        try {
+            String json = redisTemplate.opsForValue().get(TASK_CACHE_PREFIX + taskId);
+            if (json == null || json.isEmpty()) {
+                return Mono.error(new AgentException("Task not found or expired: " + taskId));
+            }
+            AgentResponse response = objectMapper.readValue(json, AgentResponse.class);
+            return Mono.just(response);
+        } catch (Exception e) {
+            log.error("Failed to read async task from Redis: taskId={}", taskId, e);
+            return Mono.error(new AgentException("Failed to retrieve task: " + taskId));
         }
-        return Mono.just(response);
     }
 
     @Override

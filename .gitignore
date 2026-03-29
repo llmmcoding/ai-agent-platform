@@ -72,3 +72,6 @@ credentials/
 # Logs
 *.log
 logs/
+venv311/
+**/*.dylib
+**/*.so

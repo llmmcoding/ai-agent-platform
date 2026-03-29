@@ -1,0 +1,132 @@
+groups:
+  - name: ai-agent-alerts
+    rules:
+      # 高错误率告警
+      - alert: HighErrorRate
+        expr: rate(agent_requests_error_total[5m]) / rate(agent_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "AI Agent error rate exceeds 5%"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+
+      # 服务不可用告警
+      - alert: ServiceDown
+        expr: up{job="ai-agent"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "AI Agent service is down"
+          description: "AI Agent instance {{ $labels.instance }} is not responding"
+
+      # 高延迟告警
+      - alert: HighLatency
+        expr: histogram_quantile(0.99, sum(rate(agent_request_latency_seconds_bucket[5m])) by (le)) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AI Agent P99 latency exceeds 5s"
+          description: "P99 latency is {{ $value | humanizeDuration }} (threshold: 5s)"
+
+      # LLM 高延迟告警
+      - alert: HighLLMLatency
+        expr: histogram_quantile(0.99, sum(rate(agent_llm_call_latency_seconds_bucket[5m])) by (le)) > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM call P99 latency exceeds 30s"
+          description: "LLM call P99 latency is {{ $value | humanizeDuration }} (threshold: 30s)"
+
+      # 活跃请求过高告警
+      - alert: HighActiveRequests
+        expr: agent_active_requests > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AI Agent active requests exceeds 100"
+          description: "Active requests: {{ $value }} (threshold: 100)"
+
+      # 缓存命中率低告警
+      - alert: LowCacheHitRate
+        expr: agent_cache_hits_total / (agent_cache_hits_total + agent_cache_misses_total) < 0.3
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "LLM cache hit rate is below 30%"
+          description: "Cache hit rate: {{ $value | humanizePercentage }}"
+
+      # Token 使用率告警
+      - alert: HighTokenUsage
+        expr: rate(llm_total_tokens[1h]) > 100000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Token usage rate is very high"
+          description: "Token usage rate: {{ $value }}/hour"
+
+      # RAG 检索延迟告警
+      - alert: HighRAGLatency
+        expr: histogram_quantile(0.99, sum(rate(agent_rag_retrieval_seconds_bucket[5m])) by (le)) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RAG retrieval P99 latency exceeds 2s"
+          description: "RAG P99 latency is {{ $value | humanizeDuration }}"
+
+      # Tool 执行失败告警
+      - alert: ToolExecutionFailures
+        expr: rate(agent_tool_calls_total{status="error"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tool execution failure rate is high"
+          description: "Tool execution error rate: {{ $value | humanizePercentage }}"
+
+      # RAG 降级触发告警
+      - alert: RAGDegradeTriggered
+        expr: rate(rag_degrade_triggered_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RAG degrade is being triggered frequently"
+          description: "RAG degrade rate: {{ $value | humanizePercentage }}"
+
+      # RAG 召回失败告警
+      - alert: RAGRecallFailures
+        expr: rate(rag_recall_failures_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "RAG recall failures are occurring"
+          description: "RAG recall failure rate: {{ $value | humanizePercentage }}"
+
+      # 向量搜索延迟告警 (按 provider)
+      - alert: VectorSearchHighLatency
+        expr: histogram_quantile(0.99, sum(rate(rag_vector_search_latency_seconds_bucket[5m])) by (le, provider)) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Vector search P99 latency exceeds 500ms for {{ $labels.provider }}"
+          description: "Provider: {{ $labels.provider }}, P99 latency: {{ $value | humanizeDuration }}"
+
+      # RAG 缓存命中率低告警
+      - alert: LowRAGCacheHitRate
+        expr: rag_cache_hits_total / (rag_cache_hits_total + rag_cache_misses_total) < 0.2
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "RAG cache hit rate is below 20%"
+          description: "RAG cache hit rate: {{ $value | humanizePercentage }}"

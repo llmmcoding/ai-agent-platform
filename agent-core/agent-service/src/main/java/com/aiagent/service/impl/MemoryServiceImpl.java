@@ -3,6 +3,7 @@ package com.aiagent.service.impl;
 import com.aiagent.common.Constants;
 import com.aiagent.service.LLMService;
 import com.aiagent.service.MemoryService;
+import com.aiagent.service.memory.MemoryCompactionManager;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -32,6 +33,7 @@ public class MemoryServiceImpl implements MemoryService {
     private final WebClient webClient;
     private final ToolKafkaClient toolKafkaClient;
     private final LLMService llmService;
+    private final MemoryCompactionManager compactionManager;
 
     @Value("${aiagent.memory.short-term.ttl:3600}")
     private int shortTermTtl;
@@ -128,67 +130,64 @@ public class MemoryServiceImpl implements MemoryService {
     @Override
     public void updateShortTermMemory(String sessionId, String userInput, String agentOutput) {
         try {
-            String key = SHORT_TERM_KEY_PREFIX + sessionId;
-            String roundsKey = ROUNDS_KEY_PREFIX + sessionId;
             long timestamp = System.currentTimeMillis();
 
-            // 1. INCR round counter
+            // 使用新的三层压缩系统 (Layer 1: Micro Compact 每轮自动执行)
+            if (compactionManager != null) {
+                // 添加用户消息
+                compactionManager.addMessage(sessionId, "user", userInput, "text");
+                // 添加助手消息
+                compactionManager.addMessage(sessionId, "assistant", agentOutput, "text");
+
+                // Layer 2: Auto Compact 检查 (token 阈值触发)
+                var result = compactionManager.checkAndAutoCompact(sessionId);
+                if (result.isCompacted()) {
+                    log.info("Auto compact triggered for session: {}, {} -> {} messages",
+                            sessionId, result.getOriginalCount(), result.getCompactedCount());
+                }
+            }
+
+            // 保持向后兼容: 同时更新旧的 Redis ZSET
+            updateLegacyMemory(sessionId, userInput, agentOutput, timestamp);
+
+        } catch (Exception e) {
+            log.error("Failed to update short-term memory for session: {}", sessionId, e);
+        }
+    }
+
+    /**
+     * 保持向后兼容的旧的 Redis ZSET 存储
+     */
+    private void updateLegacyMemory(String sessionId, String userInput, String agentOutput, long timestamp) {
+        try {
+            String key = SHORT_TERM_KEY_PREFIX + sessionId;
+            String roundsKey = ROUNDS_KEY_PREFIX + sessionId;
+
+            // INCR round counter
             Long roundCount = redisTemplate.opsForValue().increment(roundsKey);
             if (roundCount == null) {
                 roundCount = 1L;
             }
-            // 设置 round counter TTL
             redisTemplate.expire(roundsKey, Duration.ofSeconds(shortTermTtl));
 
-            // 2. 检查是否需要触发摘要 (每 N 轮触发一次)
-            boolean shouldSummarize = (roundCount % summaryTriggerRounds == 0);
+            // 批量 ZADD + 条件裁剪
+            MemoryEntry userEntry = new MemoryEntry("user", userInput, timestamp);
+            MemoryEntry assistantEntry = new MemoryEntry("assistant", agentOutput, timestamp);
 
-            if (shouldSummarize) {
-                // 即将触发摘要，只添加不裁剪（让 triggerSummary 清空）
-                MemoryEntry userEntry = new MemoryEntry("user", userInput, timestamp);
-                MemoryEntry assistantEntry = new MemoryEntry("assistant", agentOutput, timestamp);
+            List<Map<String, Object>> entries = List.of(
+                    Map.of("score", (double) timestamp, "json", objectMapper.writeValueAsString(userEntry)),
+                    Map.of("score", (double) timestamp, "json", objectMapper.writeValueAsString(assistantEntry))
+            );
 
-                List<Map<String, Object>> entries = List.of(
-                        Map.of("score", (double) timestamp, "json", objectMapper.writeValueAsString(userEntry)),
-                        Map.of("score", (double) timestamp, "json", objectMapper.writeValueAsString(assistantEntry))
-                );
+            redisTemplate.execute(BATCH_ZADD_SCRIPT_INSTANCE,
+                    List.of(key),
+                    objectMapper.writeValueAsString(entries),
+                    String.valueOf(maxMemorySize),
+                    String.valueOf(shortTermTtl)
+            );
 
-                redisTemplate.execute(BATCH_ZADD_SCRIPT_INSTANCE,
-                        List.of(key),
-                        objectMapper.writeValueAsString(entries),
-                        String.valueOf(maxMemorySize),
-                        String.valueOf(shortTermTtl)
-                );
-
-                // 异步触发摘要（摘要完成后会清空短期记忆）
-                final long capturedRoundCount = roundCount;
-                CompletableFuture.runAsync(() -> {
-                    log.info("Triggering summary for session {} at round {}", sessionId, capturedRoundCount);
-                    triggerSummary(sessionId);
-                });
-
-                log.debug("Updated short-term memory for session: {}, round: {}, summary queued", sessionId, roundCount);
-            } else {
-                // 正常情况: 批量 ZADD + 条件裁剪
-                MemoryEntry userEntry = new MemoryEntry("user", userInput, timestamp);
-                MemoryEntry assistantEntry = new MemoryEntry("assistant", agentOutput, timestamp);
-
-                List<Map<String, Object>> entries = List.of(
-                        Map.of("score", (double) timestamp, "json", objectMapper.writeValueAsString(userEntry)),
-                        Map.of("score", (double) timestamp, "json", objectMapper.writeValueAsString(assistantEntry))
-                );
-
-                Long currentSize = redisTemplate.execute(BATCH_ZADD_SCRIPT_INSTANCE,
-                        List.of(key),
-                        objectMapper.writeValueAsString(entries),
-                        String.valueOf(maxMemorySize),
-                        String.valueOf(shortTermTtl)
-                );
-
-                log.debug("Updated short-term memory for session: {}, round: {}, total entries: {}", sessionId, roundCount, currentSize);
-            }
         } catch (Exception e) {
-            log.error("Failed to update short-term memory for session: {}", sessionId, e);
+            log.warn("Failed to update legacy memory for session: {}", sessionId, e);
         }
     }
 

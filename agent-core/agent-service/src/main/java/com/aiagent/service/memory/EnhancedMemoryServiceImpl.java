@@ -40,15 +40,47 @@ public class EnhancedMemoryServiceImpl implements EnhancedMemoryService {
     // Redis Key 前缀
     private static final String PREFERENCE_KEY_PREFIX = "ai:memory:preference:";
     private static final String STATS_KEY_PREFIX = "ai:memory:stats:";
+    private static final String SHORT_TERM_KEY_PREFIX = "ai:memory:session:";
 
     // 偏好记忆 TTL (30 天)
     private static final long PREFERENCE_TTL_DAYS = 30;
+
+    @Override
+    public String getShortTermMemory(String sessionId) {
+        try {
+            String key = SHORT_TERM_KEY_PREFIX + sessionId;
+            Set<String> entriesJson = redisTemplate.opsForZSet().reverseRange(key, 0, -1);
+
+            if (entriesJson == null || entriesJson.isEmpty()) {
+                return "";
+            }
+
+            StringBuilder context = new StringBuilder();
+            for (String entryJson : entriesJson) {
+                try {
+                    MemoryEntry entry = objectMapper.readValue(entryJson, MemoryEntry.class);
+                    context.append(entry.getContent()).append("\n");
+                } catch (Exception e) {
+                    log.warn("Failed to parse memory entry: {}", e.getMessage());
+                }
+            }
+            return context.toString().trim();
+        } catch (Exception e) {
+            log.error("Failed to get short term memory: {}", e.getMessage(), e);
+            return "";
+        }
+    }
 
     @Override
     public void save(MemoryEntry entry) {
         if (entry.getUserId() == null) {
             log.warn("Cannot save memory without userId");
             return;
+        }
+
+        // 生成 ID
+        if (entry.getId() == null) {
+            entry.setId(UUID.randomUUID().toString());
         }
 
         // 计算重要性
@@ -223,8 +255,31 @@ public class EnhancedMemoryServiceImpl implements EnhancedMemoryService {
 
     @Override
     public void delete(String memoryId) {
-        // 简化实现: 需要通过 ID 删除
-        log.warn("Delete by memoryId not fully implemented: {}", memoryId);
+        if (memoryId == null) {
+            return;
+        }
+        try {
+            // Parse memoryId format: userId:TYPE:id (e.g., "user-001:EPISODIC:mem-001")
+            String[] parts = memoryId.split(":");
+            if (parts.length < 3) {
+                log.warn("Invalid memoryId format: {}", memoryId);
+                return;
+            }
+            String typeStr = parts[1];
+            MemoryType type = MemoryType.valueOf(typeStr);
+            String collection = getCollectionName(type);
+
+            VectorSearchService searchService = vectorStoreFactory.getSearchService();
+            searchService.deleteVectors(collection, List.of(memoryId));
+
+            // Update stats
+            String userId = parts[0];
+            redisTemplate.opsForValue().decrement(STATS_KEY_PREFIX + userId + ":" + typeStr);
+
+            log.info("Deleted memory: {}", memoryId);
+        } catch (Exception e) {
+            log.error("Failed to delete memory: {}", memoryId, e);
+        }
     }
 
     @Override

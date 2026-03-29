@@ -31,27 +31,88 @@ public interface Hook {
     }
 
     /**
-     * 钩子类型
+     * 钩子类型 - 扩展全生命周期 (借鉴 OpenClaw)
      */
     enum HookType {
+        // ==================== Gateway ====================
+        /** Gateway 启动 */
+        GATEWAY_START,
+        /** Gateway 停止 */
+        GATEWAY_STOP,
+
+        // ==================== Session ====================
+        /** Session 开始 */
+        SESSION_START,
+        /** Session 结束 */
+        SESSION_END,
+
+        // ==================== Request ====================
         /** 请求预处理 */
         PRE_PROCESS,
         /** 请求后处理 */
         POST_PROCESS,
         /** 错误处理 */
         ERROR,
-        /** 工具执行前 */
-        PRE_TOOL,
-        /** 工具执行后 */
-        POST_TOOL,
-        /** LLM 调用前 */
+
+        // ==================== Agent ====================
+        /** Agent 启动前 */
+        BEFORE_AGENT_START,
+        /** Agent 结束后 */
+        AGENT_END,
+
+        // ==================== LLM ====================
+        /** 模型解析前 (路由决策) */
+        BEFORE_MODEL_RESOLVE,
+        /** Prompt 构建前 */
+        BEFORE_PROMPT_BUILD,
+        /** LLM 输入 (请求发送前) */
+        LLM_INPUT,
+        /** LLM 输出 (响应接收后) */
+        LLM_OUTPUT,
+        /** LLM 调用前 (兼容旧版) */
         PRE_LLM,
-        /** LLM 调用后 */
+        /** LLM 调用后 (兼容旧版) */
         POST_LLM,
-        /** 记忆操作前 */
+
+        // ==================== Tool ====================
+        /** 工具调用前 */
+        BEFORE_TOOL_CALL,
+        /** 工具调用后 */
+        AFTER_TOOL_CALL,
+        /** 工具执行前 (兼容旧版) */
+        PRE_TOOL,
+        /** 工具执行后 (兼容旧版) */
+        POST_TOOL,
+
+        // ==================== Subagent ====================
+        /** Subagent 创建中 */
+        SUBAGENT_SPAWNING,
+        /** Subagent 已创建 */
+        SUBAGENT_SPAWNED,
+        /** Subagent 已结束 */
+        SUBAGENT_ENDED,
+
+        // ==================== Memory ====================
+        /** 压缩前 */
+        BEFORE_COMPACTION,
+        /** 压缩后 */
+        AFTER_COMPACTION,
+        /** 记忆操作前 (兼容旧版) */
         PRE_MEMORY,
-        /** 记忆操作后 */
-        POST_MEMORY
+        /** 记忆操作后 (兼容旧版) */
+        POST_MEMORY,
+
+        // ==================== Task ====================
+        /** 任务创建 */
+        TASK_CREATED,
+        /** 任务完成 */
+        TASK_COMPLETED,
+
+        // ==================== RAG ====================
+        /** RAG 查询前 */
+        BEFORE_RAG_QUERY,
+        /** RAG 查询后 */
+        AFTER_RAG_QUERY
     }
 
     /**

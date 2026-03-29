@@ -9,6 +9,16 @@ import java.util.Map;
  */
 public interface EnhancedMemoryService {
 
+    // ==================== 短期记忆操作 ====================
+
+    /**
+     * 获取短期记忆
+     *
+     * @param sessionId 会话 ID
+     * @return 记忆上下文
+     */
+    String getShortTermMemory(String sessionId);
+
     // ==================== 存储操作 ====================
 
     /**
